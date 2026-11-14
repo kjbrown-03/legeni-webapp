@@ -1,86 +1,98 @@
-// Pipeline des TP 3.5 et 3.6 (Baptiste Kaldjob) : tests -> build -> test d'acceptance -> push (main uniquement)
+// TP 3.8 (Baptiste Kaldjob) : intégration continue + déploiement continu (staging automatique, prod après validation)
 pipeline {
     agent any
 
-    parameters {
-        string(name: 'DOCKERHUB_ID', defaultValue: 'kaldjobbaptiste', description: 'Votre identifiant Docker Hub')
-        booleanParam(name: 'PUSH', defaultValue: true, description: "Pousser l'image sur Docker Hub")
-        choice(name: 'APP_COLOR', choices: ['#1f6feb', '#2da44e', '#d1242f'], description: 'Couleur de la bannière (défi TP 3.5)')
-    }
-
     environment {
-        IMAGE          = "${params.DOCKERHUB_ID}/legeni-webapp"
-        // TP 3.6 : main -> 1.1.<n> (1.0.x = builds du TP 3.5), autre branche -> <branche>-<n>
-        VERSION        = "${(env.BRANCH_NAME ?: 'main') == 'main' ? '1.1.' + env.BUILD_NUMBER : env.BRANCH_NAME.replaceAll('[^a-zA-Z0-9.-]', '-') + '-' + env.BUILD_NUMBER}"
-        // nom de branche dans les noms : main #3 et PR-1 #3 peuvent tourner en même temps
-        TEST_CONTAINER = "tp3.6-webapp-ci-${(env.BRANCH_NAME ?: 'main').replaceAll('[^a-zA-Z0-9.-]', '-')}-${env.BUILD_NUMBER}"
-        CI_NETWORK     = "tp3.6-ci-net-${(env.BRANCH_NAME ?: 'main').replaceAll('[^a-zA-Z0-9.-]', '-')}-${env.BUILD_NUMBER}"
-        // params.* a toujours sa valeur par défaut, même pour un build lancé par le Poll SCM
-        COULEUR        = "${params.APP_COLOR}"
+        IMAGE   = "legeni-webapp"
+        // main -> 1.2.<n> ; autre branche ou PR -> <branche>-<n> (tags locaux uniques, utiles au rollback)
+        VERSION = "${(env.BRANCH_NAME ?: 'main') == 'main' ? '1.2.' + env.BUILD_NUMBER : env.BRANCH_NAME.replaceAll('[^a-zA-Z0-9.-]', '-') + '-' + env.BUILD_NUMBER}"
+        COMPOSE = "docker compose -f deploy/docker-compose.deploy.yml"
     }
 
     options {
         timestamps()
-        timeout(time: 20, unit: 'MINUTES')
-        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()          // jamais deux déploiements en même temps
     }
 
     stages {
         stage('Tests unitaires') {
             steps {
-                // L'étape "test" du Dockerfile lance flake8 + pytest : si un test échoue, le build s'arrête ici
-                sh 'docker build --target test -t legeni-webapp:test .'
+                sh 'docker build --target test -t $IMAGE:test .'
             }
         }
 
         stage('Build image') {
             steps {
-                sh 'docker build --build-arg APP_VERSION=$VERSION -t $IMAGE:$VERSION -t $IMAGE:latest .'
+                sh 'docker build --build-arg APP_VERSION=$VERSION -t $IMAGE:$VERSION .'
             }
         }
 
-        stage("Test d'acceptance") {
+        stage('Déploiement staging') {
+            environment {
+                REDIS_PASSWORD = credentials('redis-password-staging')
+            }
             steps {
                 sh '''
-                    docker network create $CI_NETWORK
-                    docker run -d --name $TEST_CONTAINER --network $CI_NETWORK -e APP_COLOR="$COULEUR" $IMAGE:$VERSION
-                    # On interroge le conteneur depuis un conteneur curl placé sur le même réseau
-                    docker run --rm --network $CI_NETWORK curlimages/curl:8.11.1 \
-                        -sf --retry 10 --retry-connrefused --retry-delay 1 http://$TEST_CONTAINER:5000/health
-                    docker run --rm --network $CI_NETWORK curlimages/curl:8.11.1 \
-                        -sf http://$TEST_CONTAINER:5000/ | grep -q "Version $VERSION"
-                    # Défi : la couleur choisie apparaît bien dans la page
-                    docker run --rm --network $CI_NETWORK curlimages/curl:8.11.1 \
-                        -sf http://$TEST_CONTAINER:5000/ | grep -q "$COULEUR" && echo "couleur $COULEUR présente dans la page"
+                    IMAGE_REF=$IMAGE:$VERSION APP_ENV=staging APP_COLOR='#bf8700' PORT=8081 \
+                        $COMPOSE -p tp3-8-staging up -d --wait
                 '''
+                sh './deploy/smoke-test.sh tp3-8-staging $VERSION'
             }
         }
 
-        stage('Push Docker Hub') {
-            when { allOf { branch 'main'; expression { params.PUSH } } }
+        stage('Validation production') {
+            when { branch 'main' }
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub',
-                                                  usernameVariable: 'DH_USER',
-                                                  passwordVariable: 'DH_TOKEN')]) {
-                    sh '''
-                        echo "$DH_TOKEN" | docker login -u "$DH_USER" --password-stdin
-                        docker push $IMAGE:$VERSION
-                        docker push $IMAGE:latest
-                    '''
+                timeout(time: 15, unit: 'MINUTES') {
+                    input message: "Déployer la version ${VERSION} en production ?", ok: 'Déployer'
+                }
+            }
+        }
+
+        stage('Déploiement production') {
+            when { branch 'main' }
+            environment {
+                REDIS_PASSWORD = credentials('redis-password-prod')
+            }
+            steps {
+                script {
+                    // Image actuellement en production : servira au rollback
+                    env.PREVIOUS_IMAGE = sh(
+                        script: "docker inspect -f '{{.Config.Image}}' tp3-8-prod-web-1 2>/dev/null || echo none",
+                        returnStdout: true
+                    ).trim()
+                    echo "Version en production avant déploiement : ${env.PREVIOUS_IMAGE}"
+                    try {
+                        sh '''
+                            IMAGE_REF=$IMAGE:$VERSION APP_ENV=prod APP_COLOR='#2da44e' PORT=8082 \
+                                $COMPOSE -p tp3-8-prod up -d --wait
+                            ./deploy/smoke-test.sh tp3-8-prod $VERSION
+                        '''
+                    } catch (err) {
+                        if (env.PREVIOUS_IMAGE != 'none') {
+                            echo "Smoke test KO : retour à ${env.PREVIOUS_IMAGE}"
+                            sh '''
+                                IMAGE_REF=$PREVIOUS_IMAGE APP_ENV=prod APP_COLOR='#2da44e' PORT=8082 \
+                                    $COMPOSE -p tp3-8-prod up -d --wait
+                            '''
+                        }
+                        error "Déploiement production échoué, rollback effectué"
+                    }
                 }
             }
         }
     }
 
     post {
-        always {
-            sh 'docker rm -f $TEST_CONTAINER || true; docker network rm $CI_NETWORK || true'
-        }
         success {
-            echo "Image ${IMAGE}:${VERSION} construite et validée"
+            echo "✅ ${env.JOB_NAME} #${env.BUILD_NUMBER} : version ${VERSION} déployée"
         }
         failure {
-            echo "Échec du pipeline : consultez la console de l'étape en rouge"
+            echo "❌ ${env.JOB_NAME} #${env.BUILD_NUMBER} en échec"
+            // Email Extension configuré sur le serveur SMTP local tp3.8-mailpit (boîte visible sur http://localhost:8025)
+            emailext to: 'baptiste@legeni.local', subject: "Échec ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                     body: "Le pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} (version ${VERSION}) a échoué.\nConsole : ${env.BUILD_URL}console"
         }
     }
 }
