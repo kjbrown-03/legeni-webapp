@@ -17,7 +17,8 @@ COPY . .
 RUN flake8 . && pytest -q
 
 # ---------- Étape 3 : image finale de production ----------
-FROM base AS runtime
+FROM python:3.6-slim AS runtime
+WORKDIR /app
 ARG APP_VERSION=dev
 LABEL org.opencontainers.image.title="legeni-webapp" \
       org.opencontainers.image.version="${APP_VERSION}"
