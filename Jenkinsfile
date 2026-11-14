@@ -1,17 +1,17 @@
-// Pipeline de référence du TP 3.5 : tests -> build -> test d'acceptance -> push
+// Pipeline du TP 3.5 (Baptiste Kaldjob) : tests -> build -> test d'acceptance -> push
 pipeline {
     agent any
 
     parameters {
-        string(name: 'DOCKERHUB_ID', defaultValue: 'legeni07', description: 'Votre identifiant Docker Hub')
+        string(name: 'DOCKERHUB_ID', defaultValue: 'kaldjobbaptiste', description: 'Votre identifiant Docker Hub')
         booleanParam(name: 'PUSH', defaultValue: true, description: "Pousser l'image sur Docker Hub")
     }
 
     environment {
         IMAGE          = "${params.DOCKERHUB_ID}/legeni-webapp"
         VERSION        = "1.0.${env.BUILD_NUMBER}"
-        TEST_CONTAINER = "webapp-ci-${env.BUILD_NUMBER}"
-        CI_NETWORK     = "ci-net-${env.BUILD_NUMBER}"
+        TEST_CONTAINER = "tp3.5-webapp-ci-${env.BUILD_NUMBER}"
+        CI_NETWORK     = "tp3.5-ci-net-${env.BUILD_NUMBER}"
     }
 
     options {
