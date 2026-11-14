@@ -5,6 +5,7 @@ pipeline {
     parameters {
         string(name: 'DOCKERHUB_ID', defaultValue: 'kaldjobbaptiste', description: 'Votre identifiant Docker Hub')
         booleanParam(name: 'PUSH', defaultValue: true, description: "Pousser l'image sur Docker Hub")
+        choice(name: 'APP_COLOR', choices: ['#1f6feb', '#2da44e', '#d1242f'], description: 'Couleur de la bannière (défi TP 3.5)')
     }
 
     environment {
@@ -38,12 +39,15 @@ pipeline {
             steps {
                 sh '''
                     docker network create $CI_NETWORK
-                    docker run -d --name $TEST_CONTAINER --network $CI_NETWORK $IMAGE:$VERSION
+                    docker run -d --name $TEST_CONTAINER --network $CI_NETWORK -e APP_COLOR="$APP_COLOR" $IMAGE:$VERSION
                     # On interroge le conteneur depuis un conteneur curl placé sur le même réseau
                     docker run --rm --network $CI_NETWORK curlimages/curl:8.11.1 \
                         -sf --retry 10 --retry-connrefused --retry-delay 1 http://$TEST_CONTAINER:5000/health
                     docker run --rm --network $CI_NETWORK curlimages/curl:8.11.1 \
                         -sf http://$TEST_CONTAINER:5000/ | grep -q "Version $VERSION"
+                    # Défi : la couleur choisie apparaît bien dans la page
+                    docker run --rm --network $CI_NETWORK curlimages/curl:8.11.1 \
+                        -sf http://$TEST_CONTAINER:5000/ | grep -q "$APP_COLOR" && echo "couleur $APP_COLOR présente dans la page"
                 '''
             }
         }
