@@ -26,7 +26,7 @@ pipeline {
                     steps {
                         sh '''
                             python -m venv /tmp/venv
-                            /tmp/venv/bin/pip install -q -r requirements.txt -r requirements-dev.txt
+                            /tmp/venv/bin/pip install -q --retries 10 --timeout 120 -r requirements.txt -r requirements-dev.txt
                             mkdir -p reports
                             /tmp/venv/bin/pytest --junitxml=reports/junit.xml \
                                 --cov=app --cov-report=xml:reports/coverage.xml --cov-fail-under=80
@@ -50,7 +50,7 @@ pipeline {
                     steps {
                         sh '''
                             python -m venv /tmp/venv
-                            /tmp/venv/bin/pip install -q flake8==7.1.1
+                            /tmp/venv/bin/pip install -q --retries 10 --timeout 120 flake8==7.1.1
                             mkdir -p reports
                             /tmp/venv/bin/flake8 --output-file=reports/flake8.txt --tee .
                         '''
@@ -64,6 +64,19 @@ pipeline {
                 stage('Lint Dockerfile') {
                     steps {
                         sh 'docker run --rm -i hadolint/hadolint:v2.12.0 < Dockerfile'
+                    }
+                }
+                // Défi TP 3.7 : aucun secret (clé, jeton, mot de passe) ne doit être commité
+                stage('Secrets (gitleaks)') {
+                    agent {
+                        docker {
+                            image 'zricethezav/gitleaks:v8.21.2'
+                            args '--entrypoint='
+                            reuseNode true
+                        }
+                    }
+                    steps {
+                        sh 'gitleaks detect --source . --no-banner'
                     }
                 }
             }
