@@ -26,7 +26,7 @@ pipeline {
                     steps {
                         sh '''
                             python -m venv /tmp/venv
-                            /tmp/venv/bin/pip install -q -r requirements.txt -r requirements-dev.txt
+                            /tmp/venv/bin/pip install -q --retries 10 --timeout 120 -r requirements.txt -r requirements-dev.txt
                             mkdir -p reports
                             /tmp/venv/bin/pytest --junitxml=reports/junit.xml \
                                 --cov=app --cov-report=xml:reports/coverage.xml --cov-fail-under=80
@@ -50,7 +50,7 @@ pipeline {
                     steps {
                         sh '''
                             python -m venv /tmp/venv
-                            /tmp/venv/bin/pip install -q flake8==7.1.1
+                            /tmp/venv/bin/pip install -q --retries 10 --timeout 120 flake8==7.1.1
                             mkdir -p reports
                             /tmp/venv/bin/flake8 --output-file=reports/flake8.txt --tee .
                         '''
