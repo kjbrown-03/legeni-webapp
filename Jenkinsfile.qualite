@@ -66,6 +66,19 @@ pipeline {
                         sh 'docker run --rm -i hadolint/hadolint:v2.12.0 < Dockerfile'
                     }
                 }
+                // Défi TP 3.7 : aucun secret (clé, jeton, mot de passe) ne doit être commité
+                stage('Secrets (gitleaks)') {
+                    agent {
+                        docker {
+                            image 'zricethezav/gitleaks:v8.21.2'
+                            args '--entrypoint='
+                            reuseNode true
+                        }
+                    }
+                    steps {
+                        sh 'gitleaks detect --source . --no-banner'
+                    }
+                }
             }
         }
 
