@@ -13,6 +13,8 @@ pipeline {
         VERSION        = "1.0.${env.BUILD_NUMBER}"
         TEST_CONTAINER = "tp3.5-webapp-ci-${env.BUILD_NUMBER}"
         CI_NETWORK     = "tp3.5-ci-net-${env.BUILD_NUMBER}"
+        // params.* a toujours sa valeur par défaut, même pour un build lancé par le Poll SCM
+        COULEUR        = "${params.APP_COLOR}"
     }
 
     options {
@@ -39,7 +41,7 @@ pipeline {
             steps {
                 sh '''
                     docker network create $CI_NETWORK
-                    docker run -d --name $TEST_CONTAINER --network $CI_NETWORK -e APP_COLOR="$APP_COLOR" $IMAGE:$VERSION
+                    docker run -d --name $TEST_CONTAINER --network $CI_NETWORK -e APP_COLOR="$COULEUR" $IMAGE:$VERSION
                     # On interroge le conteneur depuis un conteneur curl placé sur le même réseau
                     docker run --rm --network $CI_NETWORK curlimages/curl:8.11.1 \
                         -sf --retry 10 --retry-connrefused --retry-delay 1 http://$TEST_CONTAINER:5000/health
@@ -47,7 +49,7 @@ pipeline {
                         -sf http://$TEST_CONTAINER:5000/ | grep -q "Version $VERSION"
                     # Défi : la couleur choisie apparaît bien dans la page
                     docker run --rm --network $CI_NETWORK curlimages/curl:8.11.1 \
-                        -sf http://$TEST_CONTAINER:5000/ | grep -q "$APP_COLOR" && echo "couleur $APP_COLOR présente dans la page"
+                        -sf http://$TEST_CONTAINER:5000/ | grep -q "$COULEUR" && echo "couleur $COULEUR présente dans la page"
                 '''
             }
         }
