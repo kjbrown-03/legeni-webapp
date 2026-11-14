@@ -1,4 +1,4 @@
-// Pipeline du TP 3.5 (Baptiste Kaldjob) : tests -> build -> test d'acceptance -> push
+// Pipeline des TP 3.5 et 3.6 (Baptiste Kaldjob) : tests -> build -> test d'acceptance -> push (main uniquement)
 pipeline {
     agent any
 
@@ -10,9 +10,11 @@ pipeline {
 
     environment {
         IMAGE          = "${params.DOCKERHUB_ID}/legeni-webapp"
-        VERSION        = "1.0.${env.BUILD_NUMBER}"
-        TEST_CONTAINER = "tp3.5-webapp-ci-${env.BUILD_NUMBER}"
-        CI_NETWORK     = "tp3.5-ci-net-${env.BUILD_NUMBER}"
+        // TP 3.6 : main -> 1.1.<n> (1.0.x = builds du TP 3.5), autre branche -> <branche>-<n>
+        VERSION        = "${(env.BRANCH_NAME ?: 'main') == 'main' ? '1.1.' + env.BUILD_NUMBER : env.BRANCH_NAME.replaceAll('[^a-zA-Z0-9.-]', '-') + '-' + env.BUILD_NUMBER}"
+        // nom de branche dans les noms : main #3 et PR-1 #3 peuvent tourner en même temps
+        TEST_CONTAINER = "tp3.6-webapp-ci-${(env.BRANCH_NAME ?: 'main').replaceAll('[^a-zA-Z0-9.-]', '-')}-${env.BUILD_NUMBER}"
+        CI_NETWORK     = "tp3.6-ci-net-${(env.BRANCH_NAME ?: 'main').replaceAll('[^a-zA-Z0-9.-]', '-')}-${env.BUILD_NUMBER}"
         // params.* a toujours sa valeur par défaut, même pour un build lancé par le Poll SCM
         COULEUR        = "${params.APP_COLOR}"
     }
@@ -55,7 +57,7 @@ pipeline {
         }
 
         stage('Push Docker Hub') {
-            when { expression { params.PUSH } }
+            when { allOf { branch 'main'; expression { params.PUSH } } }
             steps {
                 withCredentials([usernamePassword(credentialsId: 'dockerhub',
                                                   usernameVariable: 'DH_USER',
