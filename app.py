@@ -137,20 +137,3 @@ app = create_app()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")))
-
-
-def remise_fidelite(total, visites, carte_or=False):
-    """Calcule une remise de fidélité (fonction volontairement sans test)."""
-    remise = 0
-    if visites > 10:
-        remise += 5
-    if visites > 50:
-        remise += 5
-    if carte_or:
-        remise += 10
-    if total > 100:
-        remise += 2
-    if total > 500:
-        remise += 3
-    remise = min(remise, 25)
-    return round(total * remise / 100, 2)
