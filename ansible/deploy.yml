@@ -12,7 +12,7 @@
     target_env: staging
     app_image: kaldjobbaptiste/legeni-webapp
     app_version: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/../VERSION') | trim }}"
-    deploy_wait_timeout: 180
+    deploy_wait_timeout: 600        # tirage de l image depuis Docker Hub : jusqu a 2,5 min sur ma connexion
 
   pre_tasks:
     - name: Refuser "latest" (image traçable obligatoire)
