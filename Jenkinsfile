@@ -9,6 +9,7 @@ pipeline {
         REGISTRY_IMAGE = 'kaldjobbaptiste/legeni-webapp'
         APP_VERSION    = readFile('VERSION').trim()
         IMAGE_TAG      = "${APP_VERSION}-${env.BUILD_NUMBER}"      // ex. 1.1.0-37, jamais latest
+        CI_ID          = "${env.BUILD_TAG.replaceAll('[^a-zA-Z0-9_.-]', '-').toLowerCase()}"   // noms de conteneurs uniques
     }
 
     options {
@@ -19,34 +20,45 @@ pipeline {
     }
 
     stages {
+        stage('Image de test') {
+            steps {
+                // étape "test" du Dockerfile : dépendances de dev en cache Docker, pas de téléchargement PyPI à chaque build
+                sh 'docker build --target test --build-arg RUN_TESTS=0 -t legeni-webapp-ci:$CI_ID .'
+            }
+        }
+
         stage('Contrôles qualité') {
             parallel {
                 stage('Tests + couverture') {
-                    agent { docker { image 'python:3.12-slim'; args '-e HOME=/tmp'; reuseNode true } }
                     steps {
                         sh '''
-                            python -m venv /tmp/venv
-                            /tmp/venv/bin/pip install -q --retries 10 --timeout 120 -r requirements.txt -r requirements-dev.txt
                             mkdir -p reports
-                            /tmp/venv/bin/pytest --junitxml=reports/junit.xml \
-                                --cov=app --cov-report=xml:reports/coverage.xml --cov-fail-under=80
+                            set +e
+                            docker run --name tests-$CI_ID legeni-webapp-ci:$CI_ID sh -c 'mkdir -p /tmp/r && pytest \
+                                --junitxml=/tmp/r/junit.xml --cov=app --cov-report=xml:/tmp/r/coverage.xml --cov-fail-under=80'
+                            rc=$?
+                            docker cp tests-$CI_ID:/tmp/r/. reports/
+                            docker rm tests-$CI_ID >/dev/null
+                            exit $rc
                         '''
                     }
                     post {
                         always {
-                            junit 'reports/junit.xml'
+                            junit allowEmptyResults: true, testResults: 'reports/junit.xml'
                             recordCoverage(tools: [[parser: 'COBERTURA', pattern: 'reports/coverage.xml']])
                         }
                     }
                 }
                 stage('Lint Python') {
-                    agent { docker { image 'python:3.12-slim'; args '-e HOME=/tmp'; reuseNode true } }
                     steps {
                         sh '''
-                            python -m venv /tmp/venv-lint
-                            /tmp/venv-lint/bin/pip install -q --retries 10 --timeout 120 flake8==7.1.1
                             mkdir -p reports
-                            /tmp/venv-lint/bin/flake8 --output-file=reports/flake8.txt --tee .
+                            set +e
+                            docker run --name lint-$CI_ID legeni-webapp-ci:$CI_ID flake8 --output-file=/tmp/flake8.txt --tee .
+                            rc=$?
+                            docker cp lint-$CI_ID:/tmp/flake8.txt reports/flake8.txt
+                            docker rm lint-$CI_ID >/dev/null
+                            exit $rc
                         '''
                     }
                     post { always { recordIssues(tools: [flake8(pattern: 'reports/flake8.txt')]) } }
@@ -135,6 +147,9 @@ pipeline {
     }
 
     post {
+        always {
+            sh 'docker rmi legeni-webapp-ci:$CI_ID >/dev/null 2>&1 || true'
+        }
         success {
             echo "✅ ${env.JOB_NAME} #${env.BUILD_NUMBER} : ${env.IMAGE_TAG ?: '?'}"
         }
