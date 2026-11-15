@@ -14,7 +14,9 @@ FROM base AS test
 COPY requirements-dev.txt .
 RUN pip install --no-cache-dir -r requirements-dev.txt
 COPY . .
-RUN flake8 . && pytest -q
+# RUN_TESTS=0 : la CI construit seulement l image de test et lance pytest/flake8 elle-même (rapports JUnit, couverture)
+ARG RUN_TESTS=1
+RUN if [ "$RUN_TESTS" = "1" ]; then flake8 . && pytest -q; fi
 
 # ---------- Étape 3 : image finale de production ----------
 FROM base AS runtime
