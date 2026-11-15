@@ -1,0 +1,9 @@
+---
+# Jenkins du TP 3.1 (Docker CLI, kubectl, Ansible + kubernetes.core, plugins), lancé en conteneur
+jenkins_dir: "{{ ansible_env.HOME }}/jenkins"     # dossier du projet Compose sur la machine
+jenkins_project: tp3-jenkins                      # nom du projet Compose (reprend le Jenkins des TP)
+jenkins_container: tp3-jenkins
+jenkins_image: tp3-jenkins:lts
+jenkins_port: 8080
+jenkins_volume: tp3-jenkins_jenkins_home          # TOUTE la configuration de Jenkins est dans ce volume
+jenkins_minikube_network: minikube                # réseau du cluster : Jenkins joint l'API sur 192.168.49.2:8443

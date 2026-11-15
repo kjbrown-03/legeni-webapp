@@ -1,0 +1,54 @@
+---
+# Variante "réseau lent" ajoutée par Baptiste Kaldjob (connexion à 2-20 Ko/s, 115 Mo de docker-ce impossibles) :
+# les binaires Docker 29.7 (extraits de l'image kicbase déjà présente) sont montés en lecture seule dans
+# {{ docker_binaires_dir }} sur chaque nœud. Le rôle les installe sans rien télécharger.
+- name: Installer les prérequis (paquets déjà présents dans le cache apt, sans mise à jour des index)
+  ansible.builtin.apt:
+    name: [ca-certificates, curl, python3-requests, python3-docker, iptables]
+    state: present
+
+- name: Créer le groupe docker (utilisé par docker.socket)
+  ansible.builtin.group:
+    name: docker
+    system: true
+
+- name: Installer les binaires Docker (liens vers le dépôt local)
+  ansible.builtin.file:
+    src: "{{ docker_binaires_dir }}/{{ item }}"
+    dest: "/usr/bin/{{ item }}"
+    state: link
+  loop: [dockerd, docker, containerd, containerd-shim-runc-v2, runc, docker-proxy]
+  notify: Redémarrer docker
+
+- name: Créer le dossier des plugins de la CLI Docker
+  ansible.builtin.file:
+    path: /usr/libexec/docker/cli-plugins
+    state: directory
+    mode: "0755"
+
+- name: Installer le plugin docker compose
+  ansible.builtin.file:
+    src: "{{ docker_binaires_dir }}/cli-plugins/docker-compose"
+    dest: /usr/libexec/docker/cli-plugins/docker-compose
+    state: link
+
+- name: Installer les unités systemd de containerd et Docker
+  ansible.builtin.copy:
+    src: "{{ docker_binaires_dir }}/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    remote_src: true
+    mode: "0644"
+  loop: [containerd.service, docker.service, docker.socket]
+  register: docker_unites
+  notify: Redémarrer docker
+
+- name: Recharger systemd après l'ajout des unités
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: docker_unites is changed
+
+- name: Démarrer containerd
+  ansible.builtin.service:
+    name: containerd
+    state: started
+    enabled: true

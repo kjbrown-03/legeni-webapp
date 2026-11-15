@@ -1,0 +1,11 @@
+---
+# Projet final - Lot 2 : installe l'infrastructure de la machine CI (option A : une seule machine) - Baptiste Kaldjob
+#   ansible-playbook provision.yml            (machine déjà prête : rien ne change, changed=0)
+#   ansible-playbook provision.yml -K         (machine vierge : sudo pour installer Docker et les binaires)
+- name: Provisionner la machine CI
+  hosts: ci
+  gather_facts: true
+  roles:
+    - docker        # Docker Engine (ou Docker Desktop détecté)
+    - minikube      # cluster Kubernetes + metrics-server + ingress
+    - jenkins       # Jenkins du TP 3.1, relié au réseau du cluster

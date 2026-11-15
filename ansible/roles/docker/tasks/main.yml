@@ -1,0 +1,45 @@
+---
+# Rôle docker (repris du TP 5.4) : détecte un Docker déjà opérationnel, sinon l'installe
+- name: Docker répond-il déjà ? (ex. Docker Desktop avec l'intégration WSL)
+  ansible.builtin.command: docker version
+  register: docker_check
+  changed_when: false
+  failed_when: false
+
+- name: Installer Docker depuis le dépôt officiel
+  ansible.builtin.include_tasks: depot.yml
+  when: docker_check.rc != 0 and docker_source == 'depot'
+  args:
+    apply: {become: true}
+
+- name: Installer Docker depuis les binaires locaux (sans téléchargement)
+  ansible.builtin.include_tasks: binaires_locaux.yml
+  when: docker_check.rc != 0 and docker_source == 'binaires_locaux'
+  args:
+    apply: {become: true}
+
+- name: Démarrer Docker (installation par Ansible uniquement)
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+  become: true
+  when: docker_check.rc != 0
+
+- name: Autoriser les utilisateurs à utiliser Docker
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_users }}"
+  become: true
+  when: docker_check.rc != 0
+
+- name: Version de Docker disponible
+  ansible.builtin.command: docker version --format "{% raw %}{{.Server.Version}}{% endraw %}"
+  register: docker_version
+  changed_when: false
+
+- name: Afficher la version
+  ansible.builtin.debug:
+    msg: "Docker {{ docker_version.stdout }} ({{ 'déjà présent' if docker_check.rc == 0 else 'installé par Ansible' }})"

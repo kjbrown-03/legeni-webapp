@@ -1,0 +1,60 @@
+---
+# Rôle jenkins : image du TP 3.1 + conteneur relié au réseau de Minikube
+- name: Créer le dossier du projet Jenkins
+  ansible.builtin.file:
+    path: "{{ jenkins_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Copier le Dockerfile et la liste des plugins
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ jenkins_dir }}/{{ item }}"
+    mode: "0644"
+  loop: [Dockerfile, plugins.txt]
+
+- name: Construire l'image Jenkins si elle n'existe pas
+  community.docker.docker_image:
+    name: "{{ jenkins_image }}"
+    source: build
+    build:
+      path: "{{ jenkins_dir }}"
+    state: present
+
+- name: Lire le groupe du socket Docker (vu depuis un conteneur)
+  ansible.builtin.command: >-
+    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine:3.20 stat -c %g /var/run/docker.sock
+  register: docker_gid
+  changed_when: false
+
+- name: Créer le volume de données Jenkins (conservé entre deux recréations)
+  community.docker.docker_volume:
+    name: "{{ jenkins_volume }}"
+
+- name: Vérifier que le réseau de Minikube existe
+  community.docker.docker_network_info:
+    name: "{{ jenkins_minikube_network }}"
+  register: reseau_minikube
+  failed_when: not reseau_minikube.exists
+
+- name: Générer le docker-compose.yml de Jenkins
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ jenkins_dir }}/docker-compose.yml"
+    mode: "0644"
+  vars:
+    jenkins_docker_gid: "{{ docker_gid.stdout | trim }}"
+
+- name: Démarrer Jenkins
+  community.docker.docker_compose_v2:
+    project_src: "{{ jenkins_dir }}"
+    state: present
+
+- name: Attendre que Jenkins réponde
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ jenkins_port }}/login"
+    status_code: 200
+  register: jenkins_login
+  retries: 30
+  delay: 5
+  until: jenkins_login.status == 200

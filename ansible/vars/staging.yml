@@ -1,0 +1,7 @@
+---
+# Projet final - paramètres de l'environnement staging
+k8s_namespace: legeni-staging
+app_env: staging
+app_color: "#bf8700"
+app_replicas: 2
+app_node_port: 30081
