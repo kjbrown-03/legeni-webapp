@@ -1,84 +1,134 @@
-// TP 3.8 (Baptiste Kaldjob) : intégration continue + déploiement continu (staging automatique, prod après validation)
+// Projet final - chaîne CI/CD « du commit à la production » - Baptiste Kaldjob
+// CI sur toutes les branches et PR ; push, déploiements et tag Git sur main uniquement.
+// Credentials Jenkins utilisés (aucun secret dans ce fichier) :
+//   registry-credentials (Docker Hub), kubeconfig (fichier), ansible-vault-pass (fichier), github (tag Git)
 pipeline {
     agent any
 
     environment {
-        IMAGE   = "legeni-webapp"
-        // main -> 1.2.<n> ; autre branche ou PR -> <branche>-<n> (tags locaux uniques, utiles au rollback)
-        VERSION = "${(env.BRANCH_NAME ?: 'main') == 'main' ? '1.2.' + env.BUILD_NUMBER : env.BRANCH_NAME.replaceAll('[^a-zA-Z0-9.-]', '-') + '-' + env.BUILD_NUMBER}"
-        COMPOSE = "docker compose -f deploy/docker-compose.deploy.yml"
+        REGISTRY_IMAGE = 'kaldjobbaptiste/legeni-webapp'
+        APP_VERSION    = readFile('VERSION').trim()
+        IMAGE_TAG      = "${APP_VERSION}-${env.BUILD_NUMBER}"      // ex. 1.1.0-37, jamais latest
     }
 
     options {
         timestamps()
-        timeout(time: 30, unit: 'MINUTES')
-        disableConcurrentBuilds()          // jamais deux déploiements en même temps
+        timeout(time: 60, unit: 'MINUTES')
+        disableConcurrentBuilds()                 // jamais deux déploiements en même temps
+        buildDiscarder(logRotator(numToKeepStr: '15'))
     }
 
     stages {
-        stage('Tests unitaires') {
-            steps {
-                sh 'docker build --target test -t $IMAGE:test .'
+        stage('Contrôles qualité') {
+            parallel {
+                stage('Tests + couverture') {
+                    agent { docker { image 'python:3.12-slim'; args '-e HOME=/tmp'; reuseNode true } }
+                    steps {
+                        sh '''
+                            python -m venv /tmp/venv
+                            /tmp/venv/bin/pip install -q --retries 10 --timeout 120 -r requirements.txt -r requirements-dev.txt
+                            mkdir -p reports
+                            /tmp/venv/bin/pytest --junitxml=reports/junit.xml \
+                                --cov=app --cov-report=xml:reports/coverage.xml --cov-fail-under=80
+                        '''
+                    }
+                    post {
+                        always {
+                            junit 'reports/junit.xml'
+                            recordCoverage(tools: [[parser: 'COBERTURA', pattern: 'reports/coverage.xml']])
+                        }
+                    }
+                }
+                stage('Lint Python') {
+                    agent { docker { image 'python:3.12-slim'; args '-e HOME=/tmp'; reuseNode true } }
+                    steps {
+                        sh '''
+                            python -m venv /tmp/venv-lint
+                            /tmp/venv-lint/bin/pip install -q --retries 10 --timeout 120 flake8==7.1.1
+                            mkdir -p reports
+                            /tmp/venv-lint/bin/flake8 --output-file=reports/flake8.txt --tee .
+                        '''
+                    }
+                    post { always { recordIssues(tools: [flake8(pattern: 'reports/flake8.txt')]) } }
+                }
+                stage('Lint Dockerfile') {
+                    steps { sh 'docker run --rm -i hadolint/hadolint:v2.12.0 < Dockerfile' }
+                }
+                stage('Syntaxe Ansible') {
+                    steps {
+                        dir('ansible') {
+                            sh 'ansible-playbook --syntax-check provision.yml deploy.yml'
+                        }
+                    }
+                }
             }
         }
 
         stage('Build image') {
             steps {
-                sh 'docker build --build-arg APP_VERSION=$VERSION -t $IMAGE:$VERSION .'
+                sh 'docker build --build-arg APP_VERSION=$IMAGE_TAG -t $REGISTRY_IMAGE:$IMAGE_TAG .'
+            }
+        }
+
+        stage('Scan Trivy') {
+            steps {
+                // quality gate : le pipeline s'arrête si une vulnérabilité CRITICAL corrigeable est trouvée
+                sh '''
+                    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy_cache:/root/.cache \
+                        aquasec/trivy:0.57.1 image --timeout 15m --severity CRITICAL --ignore-unfixed --exit-code 1 \
+                        $REGISTRY_IMAGE:$IMAGE_TAG
+                '''
+            }
+        }
+
+        stage('Push registre') {
+            when { branch 'main' }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'registry-credentials',
+                                                  usernameVariable: 'REG_USER', passwordVariable: 'REG_TOKEN')]) {
+                    sh '''
+                        echo "$REG_TOKEN" | docker login -u "$REG_USER" --password-stdin
+                        docker push $REGISTRY_IMAGE:$IMAGE_TAG
+                        docker logout
+                    '''
+                }
             }
         }
 
         stage('Déploiement staging') {
-            environment {
-                REDIS_PASSWORD = credentials('redis-password-staging')
-            }
-            steps {
-                sh '''
-                    IMAGE_REF=$IMAGE:$VERSION APP_ENV=staging APP_COLOR='#bf8700' PORT=8081 \
-                        $COMPOSE -p tp3-8-staging up -d --wait
-                '''
-                sh './deploy/smoke-test.sh tp3-8-staging $VERSION'
-            }
+            when { branch 'main' }
+            steps { deployer('staging') }
         }
 
         stage('Validation production') {
             when { branch 'main' }
             steps {
-                timeout(time: 15, unit: 'MINUTES') {
-                    input message: "Déployer la version ${VERSION} en production ?", ok: 'Déployer'
+                timeout(time: 30, unit: 'MINUTES') {
+                    input message: "Déployer ${IMAGE_TAG} en production ?", ok: 'Déployer'
                 }
             }
         }
 
         stage('Déploiement production') {
             when { branch 'main' }
-            environment {
-                REDIS_PASSWORD = credentials('redis-password-prod')
-            }
+            steps { deployer('prod') }
+        }
+
+        stage('Tag Git') {
+            when { branch 'main' }
             steps {
-                script {
-                    // Image actuellement en production : servira au rollback
-                    env.PREVIOUS_IMAGE = sh(
-                        script: "docker inspect -f '{{.Config.Image}}' tp3-8-prod-web-1 2>/dev/null || echo none",
-                        returnStdout: true
-                    ).trim()
-                    echo "Version en production avant déploiement : ${env.PREVIOUS_IMAGE}"
-                    try {
-                        sh '''
-                            IMAGE_REF=$IMAGE:$VERSION APP_ENV=prod APP_COLOR='#2da44e' PORT=8082 \
-                                $COMPOSE -p tp3-8-prod up -d --wait
-                            ./deploy/smoke-test.sh tp3-8-prod $VERSION
-                        '''
-                    } catch (err) {
-                        if (env.PREVIOUS_IMAGE != 'none') {
-                            echo "Smoke test KO : retour à ${env.PREVIOUS_IMAGE}"
-                            sh '''
-                                IMAGE_REF=$PREVIOUS_IMAGE APP_ENV=prod APP_COLOR='#2da44e' PORT=8082 \
-                                    $COMPOSE -p tp3-8-prod up -d --wait
-                            '''
-                        }
-                        error "Déploiement production échoué, rollback effectué"
-                    }
+                withCredentials([usernamePassword(credentialsId: 'github',
+                                                  usernameVariable: 'GH_USER', passwordVariable: 'GH_TOKEN')]) {
+                    sh '''
+                        URL="https://$GH_USER:$GH_TOKEN@github.com/kjbrown-03/legeni-webapp.git"
+                        if git ls-remote --tags "$URL" | grep -q "refs/tags/v$APP_VERSION$"; then
+                            echo "Tag v$APP_VERSION déjà présent (même version redéployée)"
+                        else
+                            git -c user.name="Jenkins (Baptiste Kaldjob)" -c user.email="baptiste@legeni.local" \
+                                tag -a "v$APP_VERSION" -m "Mise en production $IMAGE_TAG"
+                            git push "$URL" "v$APP_VERSION"
+                        fi
+                    '''
                 }
             }
         }
@@ -86,13 +136,27 @@ pipeline {
 
     post {
         success {
-            echo "✅ ${env.JOB_NAME} #${env.BUILD_NUMBER} : version ${VERSION} déployée"
+            echo "✅ ${env.JOB_NAME} #${env.BUILD_NUMBER} : ${IMAGE_TAG}"
         }
         failure {
             echo "❌ ${env.JOB_NAME} #${env.BUILD_NUMBER} en échec"
-            // Email Extension configuré sur le serveur SMTP local tp3.8-mailpit (boîte visible sur http://localhost:8025)
-            emailext to: 'baptiste@legeni.local', subject: "Échec ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                     body: "Le pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} (version ${VERSION}) a échoué.\nConsole : ${env.BUILD_URL}console"
+            emailext to: 'baptiste@legeni.local',
+                     subject: "Échec ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                     body: "Le pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} (${IMAGE_TAG}) a échoué.\nConsole : ${env.BUILD_URL}console"
+        }
+    }
+}
+
+// Déploiement par Ansible (deploy.yml) : attend le rolling update, smoke test, rollback automatique en cas d'échec
+def deployer(String cible) {
+    withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG'),
+                     file(credentialsId: 'ansible-vault-pass', variable: 'VAULT_PASS')]) {
+        dir('ansible') {
+            sh """
+                export K8S_AUTH_KUBECONFIG="\$KUBECONFIG"
+                ansible-playbook deploy.yml -e target_env=${cible} -e app_version=\$IMAGE_TAG \
+                    --vault-password-file "\$VAULT_PASS"
+            """
         }
     }
 }

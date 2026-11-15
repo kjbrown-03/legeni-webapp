@@ -1,0 +1,14 @@
+---
+# Utilisateurs autorisés à utiliser Docker sans sudo
+docker_users:
+  - "{{ ansible_user }}"
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-compose-plugin
+  - docker-buildx-plugin
+# Source d'installation : "depot" (dépôt officiel download.docker.com, par défaut)
+# ou "binaires_locaux" (binaires déjà présents dans docker_binaires_dir, aucun téléchargement)
+docker_source: depot
+docker_binaires_dir: /opt/paquets-docker

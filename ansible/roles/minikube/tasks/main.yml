@@ -1,0 +1,48 @@
+---
+# Rôle minikube : cluster Minikube (driver docker) + addons. Ne fait rien si le cluster répond déjà.
+- name: Le cluster répond-il déjà ?
+  kubernetes.core.k8s_cluster_info:
+    kubeconfig: "{{ kubeconfig }}"
+  register: cluster
+  failed_when: false
+
+- name: Installer kubectl et minikube (seulement si le cluster n'existe pas)
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ minikube_bin_dir }}/{{ item.nom }}"
+    mode: "0755"
+  loop:
+    - {nom: kubectl, url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl"}
+    - {nom: minikube, url: "https://github.com/kubernetes/minikube/releases/download/{{ minikube_version }}/minikube-linux-amd64"}
+  become: true
+  when: cluster.failed | default(false) or cluster.version is not defined
+
+- name: Démarrer Minikube (driver docker)
+  ansible.builtin.command: >-
+    minikube start --driver=docker --cpus={{ minikube_cpus }} --memory={{ minikube_memory }}
+  when: cluster.failed | default(false) or cluster.version is not defined
+
+- name: Lister les déploiements des addons
+  kubernetes.core.k8s_info:
+    kubeconfig: "{{ kubeconfig }}"
+    kind: Deployment
+    namespace: "{{ item.ns }}"
+    name: "{{ item.deploy }}"
+  loop:
+    - {addon: metrics-server, ns: kube-system, deploy: metrics-server}
+    - {addon: ingress, ns: ingress-nginx, deploy: ingress-nginx-controller}
+  register: addons
+  loop_control:
+    label: "{{ item.addon }}"
+
+- name: Activer les addons manquants
+  ansible.builtin.command: "minikube addons enable {{ item.item.addon }}"
+  loop: "{{ addons.results | selectattr('resources', 'equalto', []) | list }}"
+  loop_control:
+    label: "{{ item.item.addon }}"
+
+- name: État du cluster
+  ansible.builtin.debug:
+    msg: >-
+      Kubernetes {{ cluster.version.server.kubernetes.gitVersion | default('?') }},
+      addons présents : {{ addons.results | rejectattr('resources', 'equalto', []) | map(attribute='item.addon') | join(', ') }}

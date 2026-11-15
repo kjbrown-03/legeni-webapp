@@ -1,0 +1,11 @@
+---
+galaxy_info:
+  role_name: docker
+  author: Baptiste Kaldjob
+  description: Installe Docker (dépôt officiel ou binaires locaux), ou le détecte s'il est déjà fourni (Docker Desktop / WSL)
+  license: MIT
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions: [jammy, noble]
+dependencies: []

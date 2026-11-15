@@ -1,0 +1,24 @@
+# Généré par Ansible (rôle jenkins) - ne pas modifier à la main
+name: {{ jenkins_project }}
+services:
+  jenkins:
+    image: {{ jenkins_image }}
+    pull_policy: never              # image construite par la tâche "Construire l'image Jenkins"
+    container_name: {{ jenkins_container }}
+    restart: unless-stopped
+    ports:
+      - "{{ jenkins_port }}:8080"
+      - "50000:50000"
+    group_add:
+      - "{{ jenkins_docker_gid }}"  # groupe du socket Docker (pas de chmod 666)
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [default, {{ jenkins_minikube_network }}]
+volumes:
+  jenkins_home:
+    name: {{ jenkins_volume }}
+    external: true
+networks:
+  {{ jenkins_minikube_network }}:
+    external: true
