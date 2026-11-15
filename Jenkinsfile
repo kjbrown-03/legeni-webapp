@@ -136,13 +136,13 @@ pipeline {
 
     post {
         success {
-            echo "✅ ${env.JOB_NAME} #${env.BUILD_NUMBER} : ${IMAGE_TAG}"
+            echo "✅ ${env.JOB_NAME} #${env.BUILD_NUMBER} : ${env.IMAGE_TAG ?: '?'}"
         }
         failure {
             echo "❌ ${env.JOB_NAME} #${env.BUILD_NUMBER} en échec"
             emailext to: 'baptiste@legeni.local',
                      subject: "Échec ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                     body: "Le pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} (${IMAGE_TAG}) a échoué.\nConsole : ${env.BUILD_URL}console"
+                     body: "Le pipeline ${env.JOB_NAME} #${env.BUILD_NUMBER} (${env.IMAGE_TAG ?: 'image non construite'}) a échoué.\nConsole : ${env.BUILD_URL}console"
         }
     }
 }
