@@ -104,7 +104,7 @@ spec:
             periodSeconds: 2
             failureThreshold: 30
           readinessProbe:
-            httpGet: {path: "{{ app_readiness_path | default('/ready') }}", port: 5000}
+            httpGet: {path: "{{ app_readiness_path | default('/pas-pret') }}", port: 5000}
             periodSeconds: 5
             failureThreshold: 2
           livenessProbe:
